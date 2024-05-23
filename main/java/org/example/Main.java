@@ -9,7 +9,7 @@ import java.util.List;
 
 public class Main {
     public static void main(String[] args) {
-         final CloneUtil cloneUtil = new CloneUtil();
+        final CloneUtil cloneUtil = new CloneUtil();
 
         // Test deep copying of primitive types
         int primitiveInt = 42;

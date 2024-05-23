@@ -1,14 +1,12 @@
 package clone;
 
 import cloners.*;
-import cloningStrategy.CloningStrategy;
-import cloningStrategy.ObjenesisInstantiationStrategy;
+import instantiator.CustomInstantiator;
+import instantiator.InstantiationStrategy;
 import exceptions.CloningException;
 import fastClone.FastCloner;
 import fastClone.FastClonerDeepCloner;
-import org.springframework.objenesis.instantiator.ObjectInstantiator;
 
-import java.lang.annotation.Annotation;
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
 
@@ -23,15 +21,14 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.regex.Pattern;
 
 public class CloneUtil {
-    private final Instantiation instantiationStrategy;
+    private final InstantiationStrategy instantiationStrategy;
     private final Set<Class<?>> immutableClasses = Collections.synchronizedSet(new HashSet<>());
     private final Map<Class<?>, FastCloner> fastCloners = new ConcurrentHashMap<>();
-    private final List<CloningStrategy> cloningStrategies = Collections.synchronizedList(new ArrayList<>());
     private final Map<Object, Object> ignoredInstances = Collections.synchronizedMap(new HashMap<>());
     private volatile boolean cloningEnabled = true;
 
     public CloneUtil() {
-        this.instantiationStrategy = ObjenesisInstantiationStrategy.getInstance();
+        this.instantiationStrategy = InstantiationStrategy.getInstance();
         initialize();
     }
 
@@ -128,51 +125,11 @@ public class CloneUtil {
         }
     }
 
-    private final ConcurrentHashMap<Class<?>, Boolean> immutableCache = new ConcurrentHashMap<>();
-
-    protected boolean isImmutable(Class<?> clazz) {
-        Boolean isImmutable = immutableCache.get(clazz);
-        if (isImmutable != null) return isImmutable;
-        if (considerImmutable()) return true;
-
-        for (Annotation annotation : clazz.getDeclaredAnnotations()) {
-            if (annotation.annotationType() == getImmutableAnnotation()) {
-                immutableCache.put(clazz, Boolean.TRUE);
-                return true;
-            }
-        }
-
-        Class<?> superClass = clazz.getSuperclass();
-        while (superClass != null && superClass != Object.class) {
-            for (Annotation annotation : superClass.getDeclaredAnnotations()) {
-                if (annotation.annotationType() == Immutable.class) {
-                    Immutable immutable = (Immutable) annotation;
-                    if (immutable.subClass()) {
-                        immutableCache.put(clazz, Boolean.TRUE);
-                        return true;
-                    }
-                }
-            }
-            superClass = superClass.getSuperclass();
-        }
-
-        immutableCache.put(clazz, Boolean.FALSE);
-        return false;
-    }
-
-    protected boolean considerImmutable() {
-        return false;
-    }
-
-    protected Class<?> getImmutableAnnotation() {
-        return Immutable.class;
-    }
-
     private DeepCloner findDeepCloner(Class<?> clazz) {
         if (Enum.class.isAssignableFrom(clazz) || immutableClasses.contains(clazz)) {
             return IGNORE_CLONER;
         } else if (fastCloners.containsKey(clazz)) {
-            return new FastClonerDeepCloner(fastCloners.get(clazz),this);
+            return new FastClonerDeepCloner(fastCloners.get(clazz), this);
         } else if (clazz.isArray()) {
             return new CloneArrayCloner(clazz);
         } else {
@@ -233,7 +190,7 @@ public class CloneUtil {
         private final Field[] fields;
         private final boolean[] shouldClone;
         private final int numFields;
-        private final ObjectInstantiator<?> instantiator;
+        private final CustomInstantiator<?> instantiator;
 
         CloneObjectCloner(Class<?> clazz) {
             List<Field> fieldList = new ArrayList<>();
@@ -272,7 +229,7 @@ public class CloneUtil {
                     for (int i = 0; i < numFields; i++) {
                         Field field = fields[i];
                         Object fieldObject = field.get(object);
-                        Object fieldObjectClone = shouldClone[i] ? applyCloningStrategy(clones, object, fieldObject, field) : fieldObject;
+                        Object fieldObjectClone = shouldClone[i] ? cloneInternally(fieldObject, clones) : fieldObject;
                         field.set(newInstance, fieldObjectClone);
                     }
                 } else {
@@ -285,18 +242,12 @@ public class CloneUtil {
                 return newInstance;
             } catch (IllegalAccessException e) {
                 throw new CloningException(e);
+            } catch (NoSuchMethodException e) {
+                throw new RuntimeException(e);
             }
         }
     }
 
-    private Object applyCloningStrategy(Map<Object, Object> clones, Object object, Object fieldObject, Field field) {
-        for (CloningStrategy strategy : cloningStrategies) {
-            CloningStrategy.Strategy s = strategy.strategyFor(object, field);
-            if (s == CloningStrategy.Strategy.NULL_INSTEAD_OF_CLONE) return null;
-            if (s == CloningStrategy.Strategy.SAME_INSTANCE_INSTEAD_OF_CLONE) return fieldObject;
-        }
-        return cloneInternally(fieldObject, clones);
-    }
 
     private boolean isAnonymousParent(Field field) {
         return "this$0".equals(field.getName());
